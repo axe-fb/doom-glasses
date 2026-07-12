@@ -9,80 +9,42 @@
   <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==">
   <style>
     :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
     html, body { margin:0; padding:0; background:#000; width:100%; height:100%; overflow:hidden; }
     #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; }
     #canvas { image-rendering:pixelated; width:600px; height:600px; background:#000; display:none; }
-    #status { position:fixed; top:50%; left:0; right:0; transform:translateY(-50%); text-align:center;
-              color:#e33; font:600 20px/1.4 ui-monospace,monospace; padding:0 24px; }
-    #boot { position:fixed; left:6px; right:6px; top:6px; max-height:72vh; overflow:auto; z-index:50;
-            background:#000d; color:#8f8; font:11px/1.35 ui-monospace,monospace; border:1px solid #0f04;
-            border-radius:6px; padding:6px 8px; }
-    #boot div { white-space:pre-wrap; }
-    /* On-screen controls (for simulator / desktop testing; the real glasses use the D-pad) */
-    #pad { position:fixed; right:10px; bottom:10px; z-index:30; display:grid; grid-template-columns:repeat(3,46px);
-           grid-auto-rows:40px; gap:5px; font:600 14px sans-serif; opacity:.9; }
-    #pad button { all:unset; display:flex; align-items:center; justify-content:center; height:40px; border-radius:7px;
-                  background:#2694fe; color:#fff; cursor:pointer; user-select:none; touch-action:none; }
-    #pad button.act { background:#e0523a; }
-    /* Event debugger */
-    #dbgToggle { position:fixed; left:8px; top:8px; z-index:41; background:#111c; color:#9f9;
-                 border:1px solid #0f05; border-radius:6px; font:600 11px ui-monospace,monospace; padding:4px 8px; cursor:pointer; }
-    #dbg { position:fixed; left:8px; top:36px; z-index:40; width:300px; max-height:46vh; overflow:auto;
-           background:#000d; color:#0f0; font:11px/1.35 ui-monospace,monospace; border:1px solid #0f04;
-           border-radius:8px; padding:6px 8px; display:none; }
-    #dbg b { color:#9f9; }
+
+    /* Loading screen: title + progress bar (readable on the glasses) */
+    #loader { position:fixed; inset:0; z-index:20; display:flex; flex-direction:column;
+              align-items:center; justify-content:center; gap:22px; background:#000; }
+    #loader.hidden { display:none; }
+    #title { color:#e02a2a; font:800 46px/1 ui-monospace,Menlo,monospace; letter-spacing:6px; }
+    #bar { width:72%; max-width:440px; height:24px; border:2px solid #666; border-radius:13px;
+           overflow:hidden; background:#141414; }
+    #barfill { height:100%; width:0%; background:#e02a2a; transition:width .15s linear; }
+    #pct { color:#f0f0f0; font:600 22px ui-monospace,monospace; }
+    #msg { color:#ff6b6b; font:14px/1.4 ui-monospace,monospace; max-width:82%; text-align:center; min-height:18px; }
   </style>
 </head>
 <body>
   <div id="wrap"><canvas id="canvas" tabindex="0"></canvas></div>
-  <div id="status">Loading…</div>
-  <div id="boot"></div>
 
-  <button id="dbgToggle">&#9636; events</button>
-  <div id="dbg"><b>input events (newest first)</b><div id="dbgLog"></div></div>
-
-  <div id="pad">
-    <div></div>
-    <button data-hold="ArrowUp">&#8593;</button>
-    <button data-hold="FIRE">FIRE</button>
-    <button data-hold="ArrowLeft">&#8592;</button>
-    <button data-hold="ArrowDown">&#8595;</button>
-    <button data-hold="ArrowRight">&#8594;</button>
-    <button data-tap="USE">USE</button>
-    <div></div>
-    <div></div>
+  <div id="loader">
+    <div id="title">DOOM</div>
+    <div id="bar"><div id="barfill"></div></div>
+    <div id="pct">Loading engine…</div>
+    <div id="msg"></div>
   </div>
 
-  <!-- ===== On-screen console (no devtools on the glasses) ===== -->
-  <script>
-  (function(){
-    var boot = document.getElementById('boot'); var lines = [];
-    window.__log = function(s){
-      var ts = ('' + (Date.now() % 100000));
-      lines.push(ts + '  ' + s); if (lines.length > 200) lines.shift();
-      if (boot){ boot.textContent=''; for (var i=lines.length-1;i>=0;i--){ var d=document.createElement('div'); d.textContent=lines[i]; boot.appendChild(d); } }
-    };
-    ['log','info','warn','error'].forEach(function(m){
-      var o = console[m] ? console[m].bind(console) : function(){};
-      console[m] = function(){ try{ window.__log((m==='error'?'ERR ':m==='warn'?'WARN ':'') + Array.prototype.map.call(arguments,function(a){return (a && a.message)?a.message:(typeof a==='object'?JSON.stringify(a):String(a));}).join(' ')); }catch(e){} o.apply(null, arguments); };
-    });
-    window.addEventListener('error', function(e){ window.__log('WINDOW ERROR: ' + (e.message || (e.error && e.error.message) || e.filename)); });
-    window.addEventListener('unhandledrejection', function(e){ window.__log('PROMISE REJECT: ' + ((e.reason && e.reason.message) || e.reason)); });
-    window.__log('boot log ready');
-  })();
-  </script>
-
-  <!-- ===== Control adapter + event debugger (tune CONTROLS after reading real events) ===== -->
+  <!-- ===== Control adapter (band input → DOOM). No on-screen UI. ===== -->
   <script>
   (function () {
-    // Engine key bindings for the bundled prebuilt DOOM. Common DOOM defaults are
-    // fire=Ctrl, use=Space — verify/adjust using the event debugger + on-device test.
+    // Engine keys for the bundled prebuilt DOOM (tune if needed).
     const CONTROLS = {
-      FIRE: { key: 'Control', code: 'ControlLeft', keyCode: 17 },  // engine fire
-      USE:  { key: ' ',       code: 'Space',       keyCode: 32 },  // engine use / open door
-      MENU: { key: 'Enter',   code: 'Enter',       keyCode: 13 },  // menu select
+      FIRE: { key: 'Control', code: 'ControlLeft', keyCode: 17 },
+      USE:  { key: ' ',       code: 'Space',       keyCode: 32 },
+      MENU: { key: 'Enter',   code: 'Enter',       keyCode: 13 },
     };
-    const ARROW = { ArrowUp:38, ArrowDown:40, ArrowLeft:37, ArrowRight:39 };
     const canvas = document.getElementById('canvas');
     const targets = () => [canvas, document, window];
     let emitting = false;
@@ -92,101 +54,66 @@
       targets().forEach(t => t.dispatchEvent(new KeyboardEvent(type, init)));
       emitting = false;
     }
-    const spec = name => CONTROLS[name] || { key:name, code:name, keyCode:ARROW[name] };
-    const held = new Set();
-    function down(name){ const s=spec(name); if(!held.has(s.keyCode)){ held.add(s.keyCode); dispatch('keydown', s);} }
-    function up(name){ const s=spec(name); if(held.has(s.keyCode)){ held.delete(s.keyCode); dispatch('keyup', s);} }
-    function tap(name, ms=90){ down(name); setTimeout(()=>up(name), ms); }
-    function hold(name, ms){ down(name); setTimeout(()=>up(name), ms); }
-    // The neural band emits 4 arrows (move/turn) + ONE select gesture that arrives as
-    // key="Unidentified" / keyCode 0. With only one action available, that gesture does
-    // menu-select + fire + open-door together.
-    function selectAction(){ tap('MENU'); tap('FIRE'); tap('USE'); }
-    window.__doom = { down, up, tap, hold, selectAction, CONTROLS };
-
-    // Recognize the band's select gesture (Unidentified / kc0) — and Enter, for the emulator.
+    const tap = s => { dispatch('keydown', s); setTimeout(() => dispatch('keyup', s), 70); };
+    // The 4 arrows pass straight through to the engine (move/turn). The band's single
+    // "select" gesture arrives as key="Unidentified" / keyCode 0 → do menu-select + fire + use.
+    function selectAction(){ tap(CONTROLS.MENU); tap(CONTROLS.FIRE); tap(CONTROLS.USE); }
+    window.__doom = { tap, selectAction, CONTROLS };
     const isSelect = e => e.key === 'Unidentified' || e.keyCode === 0 || e.key === 'Enter';
     window.addEventListener('keydown', e => { if (emitting) return; if (isSelect(e)) { e.stopImmediatePropagation(); e.preventDefault(); selectAction(); } }, true);
     window.addEventListener('keyup',   e => { if (emitting) return; if (isSelect(e)) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
-
-    // On-screen pad
-    document.querySelectorAll('#pad button').forEach(b => {
-      const hold = b.dataset.hold, t = b.dataset.tap;
-      if (hold) {
-        b.addEventListener('pointerdown', e => { e.preventDefault(); b.classList.add('act'); down(hold); });
-        const u = () => { b.classList.remove('act'); up(hold); };
-        b.addEventListener('pointerup', u); b.addEventListener('pointerleave', u);
-      } else if (t) {
-        b.addEventListener('pointerdown', e => { e.preventDefault(); tap(t); });
-      }
-    });
-
-    // ===== Event debugger: log ALL input events to discover what the glasses emit =====
-    const logEl = document.getElementById('dbgLog'), dbg = document.getElementById('dbg');
-    document.getElementById('dbgToggle').addEventListener('click', () => {
-      dbg.style.display = dbg.style.display === 'none' ? 'block' : 'none';
-    });
-    let n = 0;
-    function rec(e) {
-      if (emitting && (e.type==='keydown' || e.type==='keyup')) return; // ignore our own synthesized keys
-      let d = e.type;
-      if (e.type.startsWith('key')) d += ' key=' + JSON.stringify(e.key) + ' code=' + e.code + ' kc=' + e.keyCode + (e.repeat ? ' (repeat)' : '');
-      else if (e.type.startsWith('pointer') || e.type.startsWith('mouse') || e.type.startsWith('touch')) d += ' @' + Math.round(e.clientX||0) + ',' + Math.round(e.clientY||0) + (e.pointerType ? ' ' + e.pointerType : '');
-      else if (e.type === 'wheel') d += ' dy=' + Math.round(e.deltaY);
-      const line = document.createElement('div'); line.textContent = (++n) + '  ' + d;
-      logEl.prepend(line); while (logEl.childNodes.length > 60) logEl.removeChild(logEl.lastChild);
-    }
-    ['keydown','keyup','keypress','pointerdown','pointerup','click','touchstart','touchend','wheel','gesturestart','gesturechange']
-      .forEach(t => window.addEventListener(t, rec, { capture:true, passive:true }));
   })();
   </script>
 
   <!-- ===== DOOM engine loader (prebuilt Emscripten ES module + Freedoom IWAD) ===== -->
   <script type="module">
-    const L = m => { window.__log && window.__log(m); };
-    const status = m => { const s = document.getElementById('status'); if (s) s.textContent = m; L(m); };
+    const bar = document.getElementById('barfill');
+    const pctEl = document.getElementById('pct');
+    const msgEl = document.getElementById('msg');
+    const loader = document.getElementById('loader');
+    const setPct = (p, label) => { bar.style.width = p + '%'; pctEl.textContent = label || (p + '%'); };
+    const fail = m => { msgEl.textContent = m; };
+    window.addEventListener('error', e => fail('ERROR: ' + (e.message || e.filename)));
+    window.addEventListener('unhandledrejection', e => fail('ERROR: ' + ((e.reason && e.reason.message) || e.reason)));
+
     async function fetchProgress(url){
       const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' fetching ' + url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' for ' + url);
       const total = +(resp.headers.get('content-length') || 0);
       if (!resp.body || !resp.body.getReader) return new Uint8Array(await resp.arrayBuffer());
-      const reader = resp.body.getReader(); let received = 0; const chunks = []; let lastPct = -1;
+      const reader = resp.body.getReader(); let received = 0; const chunks = []; let last = -1;
       for (;;){
         const { done, value } = await reader.read(); if (done) break;
         chunks.push(value); received += value.length;
-        const pct = total ? Math.floor(received / total * 100) : -1;
-        if (pct !== lastPct){ lastPct = pct; status('Loading WAD  ' + (total ? pct + '%  ' : '') + (received/1048576).toFixed(1) + (total ? '/' + (total/1048576).toFixed(1) : '') + ' MB'); }
+        const p = total ? Math.floor(received / total * 100) : Math.min(99, Math.floor(received / 3e5));
+        if (p !== last){ last = p; setPct(p, p + '%   ' + (received/1048576).toFixed(1) + (total ? '/' + (total/1048576).toFixed(1) : '') + ' MB'); }
       }
       const out = new Uint8Array(received); let pos = 0; for (const c of chunks){ out.set(c, pos); pos += c.length; } return out;
     }
+
     try {
-      status('Loading engine…');
+      setPct(0, 'Loading engine…');
       const { default: Module } = await import('./wasm-doom.js');
-      L('engine module imported');
       const canvas = document.getElementById('canvas');
       canvas.width = 320; canvas.height = 200;
       const doom = await Module({
         canvas,
         locateFile: p => p.endsWith('.wasm') ? './wasm-doom.wasm' : p,
-        print: (...a) => L('[doom] ' + a.join(' ')),
-        printErr: (...a) => L('[doom!] ' + a.join(' ')),
+        print: () => {}, printErr: () => {},
       });
-      L('engine instantiated');
-      status('Loading WAD…');
+      setPct(0, 'Downloading DOOM…');
       const buf = await fetchProgress('./freedoom1.wad');
       const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
-      L('WAD ' + (buf.length/1048576).toFixed(1) + ' MB, magic=' + magic);
-      if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('unexpected WAD magic: ' + magic);
-      status('Writing WAD…'); doom.FS.writeFile('/doom.wad', buf); L('WAD written to FS');
-      status('Starting…'); document.getElementById('status').style.display = 'none';
+      if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('bad WAD magic: ' + magic);
+      setPct(100, 'Starting…');
+      doom.FS.writeFile('/doom.wad', buf);
+      loader.classList.add('hidden');
       canvas.style.display = 'block'; canvas.focus();
       // Boot straight into E1M1 — the band has no menu/Escape gesture, so skip the title menu.
       doom.callMain(['-iwad', 'doom.wad', '-warp', '1', '1', '-skill', '2']);
-      L('callMain returned — game running');
     } catch (e) {
-      status('ERROR: ' + (e && e.message || e));
-      L('FATAL ' + (e && e.stack || e));
-      console.error(e);
+      setPct(0, 'Failed');
+      fail((e && e.message) || String(e));
     }
   </script>
 </body>
