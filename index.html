@@ -14,6 +14,10 @@
     #canvas { image-rendering:pixelated; width:600px; height:600px; background:#000; display:none; }
     #status { position:fixed; top:50%; left:0; right:0; transform:translateY(-50%); text-align:center;
               color:#e33; font:600 20px/1.4 ui-monospace,monospace; padding:0 24px; }
+    #boot { position:fixed; left:6px; right:6px; top:6px; max-height:72vh; overflow:auto; z-index:50;
+            background:#000d; color:#8f8; font:11px/1.35 ui-monospace,monospace; border:1px solid #0f04;
+            border-radius:6px; padding:6px 8px; }
+    #boot div { white-space:pre-wrap; }
     /* On-screen controls (for simulator / desktop testing; the real glasses use the D-pad) */
     #pad { position:fixed; right:10px; bottom:10px; z-index:30; display:grid; grid-template-columns:repeat(3,46px);
            grid-auto-rows:40px; gap:5px; font:600 14px sans-serif; opacity:.9; }
@@ -32,6 +36,7 @@
 <body>
   <div id="wrap"><canvas id="canvas" tabindex="0"></canvas></div>
   <div id="status">Loading…</div>
+  <div id="boot"></div>
 
   <button id="dbgToggle">&#9636; events</button>
   <div id="dbg"><b>input events (newest first)</b><div id="dbgLog"></div></div>
@@ -47,6 +52,25 @@
     <div></div>
     <div></div>
   </div>
+
+  <!-- ===== On-screen console (no devtools on the glasses) ===== -->
+  <script>
+  (function(){
+    var boot = document.getElementById('boot'); var lines = [];
+    window.__log = function(s){
+      var ts = ('' + (Date.now() % 100000));
+      lines.push(ts + '  ' + s); if (lines.length > 200) lines.shift();
+      if (boot){ boot.textContent=''; for (var i=lines.length-1;i>=0;i--){ var d=document.createElement('div'); d.textContent=lines[i]; boot.appendChild(d); } }
+    };
+    ['log','info','warn','error'].forEach(function(m){
+      var o = console[m] ? console[m].bind(console) : function(){};
+      console[m] = function(){ try{ window.__log((m==='error'?'ERR ':m==='warn'?'WARN ':'') + Array.prototype.map.call(arguments,function(a){return (a && a.message)?a.message:(typeof a==='object'?JSON.stringify(a):String(a));}).join(' ')); }catch(e){} o.apply(null, arguments); };
+    });
+    window.addEventListener('error', function(e){ window.__log('WINDOW ERROR: ' + (e.message || (e.error && e.error.message) || e.filename)); });
+    window.addEventListener('unhandledrejection', function(e){ window.__log('PROMISE REJECT: ' + ((e.reason && e.reason.message) || e.reason)); });
+    window.__log('boot log ready');
+  })();
+  </script>
 
   <!-- ===== Control adapter + event debugger (tune CONTROLS after reading real events) ===== -->
   <script>
@@ -119,29 +143,49 @@
 
   <!-- ===== DOOM engine loader (prebuilt Emscripten ES module + Freedoom IWAD) ===== -->
   <script type="module">
-    const status = m => { const s = document.getElementById('status'); if (s) s.textContent = m; };
+    const L = m => { window.__log && window.__log(m); };
+    const status = m => { const s = document.getElementById('status'); if (s) s.textContent = m; L(m); };
+    async function fetchProgress(url){
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' fetching ' + url);
+      const total = +(resp.headers.get('content-length') || 0);
+      if (!resp.body || !resp.body.getReader) return new Uint8Array(await resp.arrayBuffer());
+      const reader = resp.body.getReader(); let received = 0; const chunks = []; let lastPct = -1;
+      for (;;){
+        const { done, value } = await reader.read(); if (done) break;
+        chunks.push(value); received += value.length;
+        const pct = total ? Math.floor(received / total * 100) : -1;
+        if (pct !== lastPct){ lastPct = pct; status('Loading WAD  ' + (total ? pct + '%  ' : '') + (received/1048576).toFixed(1) + (total ? '/' + (total/1048576).toFixed(1) : '') + ' MB'); }
+      }
+      const out = new Uint8Array(received); let pos = 0; for (const c of chunks){ out.set(c, pos); pos += c.length; } return out;
+    }
     try {
       status('Loading engine…');
       const { default: Module } = await import('./wasm-doom.js');
+      L('engine module imported');
       const canvas = document.getElementById('canvas');
       canvas.width = 320; canvas.height = 200;
       const doom = await Module({
         canvas,
         locateFile: p => p.endsWith('.wasm') ? './wasm-doom.wasm' : p,
-        print: (...a) => console.log(...a),
-        printErr: (...a) => console.warn(...a),
+        print: (...a) => L('[doom] ' + a.join(' ')),
+        printErr: (...a) => L('[doom!] ' + a.join(' ')),
       });
-      status('Loading Freedoom…');
-      const buf = new Uint8Array(await (await fetch('./freedoom1.wad')).arrayBuffer());
+      L('engine instantiated');
+      status('Loading WAD…');
+      const buf = await fetchProgress('./freedoom1.wad');
       const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
+      L('WAD ' + (buf.length/1048576).toFixed(1) + ' MB, magic=' + magic);
       if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('unexpected WAD magic: ' + magic);
-      doom.FS.writeFile('/doom.wad', buf);
-      document.getElementById('status').style.display = 'none';
+      status('Writing WAD…'); doom.FS.writeFile('/doom.wad', buf); L('WAD written to FS');
+      status('Starting…'); document.getElementById('status').style.display = 'none';
       canvas.style.display = 'block'; canvas.focus();
       // Boot straight into E1M1 — the band has no menu/Escape gesture, so skip the title menu.
       doom.callMain(['-iwad', 'doom.wad', '-warp', '1', '1', '-skill', '2']);
+      L('callMain returned — game running');
     } catch (e) {
-      status('Error: ' + (e && e.message || e));
+      status('ERROR: ' + (e && e.message || e));
+      L('FATAL ' + (e && e.stack || e));
       console.error(e);
     }
   </script>
