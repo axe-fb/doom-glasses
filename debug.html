@@ -80,10 +80,11 @@
       }
       var big = '', meta = '', desc = t;
       if (t.indexOf('key') === 0) {
-        big = (e.key === ' ' ? 'Space' : e.key) + '';
-        meta = 'code=' + e.code + '   keyCode=' + e.keyCode + (e.repeat ? '   (repeat)' : '');
-        desc = t + '  ' + JSON.stringify(e.key) + '  code=' + e.code + '  kc=' + e.keyCode + (e.repeat ? ' r' : '');
-        if (t === 'keydown') { var kk = e.code || e.key || ('kc' + e.keyCode); state.tally[kk] = (state.tally[kk] || 0) + 1; }
+        var kname = (e.key === ' ' ? 'Space' : (e.key || '(none)'));
+        big = kname + '   ·   keyCode ' + e.keyCode;
+        meta = 'key=' + JSON.stringify(e.key) + '   code=' + (e.code || '(empty)') + '   keyCode=' + e.keyCode + '   which=' + e.which + (e.repeat ? '   (repeat)' : '');
+        desc = t + '  key=' + JSON.stringify(e.key) + '  code=' + (e.code || '') + '  kc=' + e.keyCode + (e.repeat ? ' r' : '');
+        if (t === 'keydown') { var kk = (e.code && e.code.length) ? e.code : (kname + ' / kc' + e.keyCode); state.tally[kk] = (state.tally[kk] || 0) + 1; }
       } else if (t.indexOf('pointer') === 0 || t.indexOf('touch') === 0 || t.indexOf('mouse') === 0 || t === 'click') {
         big = t.toUpperCase();
         meta = '@' + Math.round(e.clientX || 0) + ',' + Math.round(e.clientY || 0) + (e.pointerType ? '  ' + e.pointerType : '');
