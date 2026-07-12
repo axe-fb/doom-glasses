@@ -54,8 +54,9 @@
     // Engine key bindings for the bundled prebuilt DOOM. Common DOOM defaults are
     // fire=Ctrl, use=Space — verify/adjust using the event debugger + on-device test.
     const CONTROLS = {
-      FIRE: { key: 'Control', code: 'ControlLeft', keyCode: 17 },
-      USE:  { key: ' ',       code: 'Space',       keyCode: 32 },
+      FIRE: { key: 'Control', code: 'ControlLeft', keyCode: 17 },  // engine fire
+      USE:  { key: ' ',       code: 'Space',       keyCode: 32 },  // engine use / open door
+      MENU: { key: 'Enter',   code: 'Enter',       keyCode: 13 },  // menu select
     };
     const ARROW = { ArrowUp:38, ArrowDown:40, ArrowLeft:37, ArrowRight:39 };
     const canvas = document.getElementById('canvas');
@@ -67,18 +68,22 @@
       targets().forEach(t => t.dispatchEvent(new KeyboardEvent(type, init)));
       emitting = false;
     }
-    const spec = name => name==='FIRE' ? CONTROLS.FIRE : name==='USE' ? CONTROLS.USE
-                      : { key:name, code:name, keyCode:ARROW[name] };
+    const spec = name => CONTROLS[name] || { key:name, code:name, keyCode:ARROW[name] };
     const held = new Set();
     function down(name){ const s=spec(name); if(!held.has(s.keyCode)){ held.add(s.keyCode); dispatch('keydown', s);} }
     function up(name){ const s=spec(name); if(held.has(s.keyCode)){ held.delete(s.keyCode); dispatch('keyup', s);} }
     function tap(name, ms=90){ down(name); setTimeout(()=>up(name), ms); }
-    window.__doom = { down, up, tap, CONTROLS };
+    function hold(name, ms){ down(name); setTimeout(()=>up(name), ms); }
+    // The neural band emits 4 arrows (move/turn) + ONE select gesture that arrives as
+    // key="Unidentified" / keyCode 0. With only one action available, that gesture does
+    // menu-select + fire + open-door together.
+    function selectAction(){ tap('MENU'); tap('FIRE'); tap('USE'); }
+    window.__doom = { down, up, tap, hold, selectAction, CONTROLS };
 
-    // Map the glasses/emulator "tap" (Enter) -> FIRE so the D-pad Select fires.
-    const remap = type => e => { if (emitting) return; if (e.key==='Enter'){ e.stopImmediatePropagation(); e.preventDefault(); dispatch(type, CONTROLS.FIRE); } };
-    window.addEventListener('keydown', remap('keydown'), true);
-    window.addEventListener('keyup',   remap('keyup'),   true);
+    // Recognize the band's select gesture (Unidentified / kc0) — and Enter, for the emulator.
+    const isSelect = e => e.key === 'Unidentified' || e.keyCode === 0 || e.key === 'Enter';
+    window.addEventListener('keydown', e => { if (emitting) return; if (isSelect(e)) { e.stopImmediatePropagation(); e.preventDefault(); selectAction(); } }, true);
+    window.addEventListener('keyup',   e => { if (emitting) return; if (isSelect(e)) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 
     // On-screen pad
     document.querySelectorAll('#pad button').forEach(b => {
@@ -133,7 +138,8 @@
       doom.FS.writeFile('/doom.wad', buf);
       document.getElementById('status').style.display = 'none';
       canvas.style.display = 'block'; canvas.focus();
-      doom.callMain(['-iwad', 'doom.wad']);
+      // Boot straight into E1M1 — the band has no menu/Escape gesture, so skip the title menu.
+      doom.callMain(['-iwad', 'doom.wad', '-warp', '1', '1', '-skill', '2']);
     } catch (e) {
       status('Error: ' + (e && e.message || e));
       console.error(e);
