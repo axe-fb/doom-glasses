@@ -102,7 +102,7 @@
         print: () => {}, printErr: () => {},
       });
       setPct(0, 'Downloading DOOM…');
-      const buf = await fetchProgress('./freedoom1.wad');
+      const buf = await fetchProgress('./doom1.wad');
       const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
       if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('bad WAD magic: ' + magic);
       setPct(100, 'Starting…');
