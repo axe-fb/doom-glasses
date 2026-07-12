@@ -36,14 +36,13 @@ jobs:
           gh api -H "Accept: application/vnd.github.raw" \
             repos/VanIseghemThomas/wasmDOOM/contents/public/wasm/wasm-doom.wasm > site/wasm-doom.wasm
 
-          # Freedoom (fully libre IWAD) — pinned release.
-          curl -fsSL -o freedoom.zip \
-            https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
-          unzip -o -q freedoom.zip
-          cp "$(find . -name freedoom1.wad | head -1)" site/freedoom1.wad
+          # Shareware DOOM1 IWAD (~4 MB) — same small WAD the store/community builds use;
+          # loads fast over the glasses' phone-tethered link (29 MB Freedoom did not).
+          gh api -H "Accept: application/vnd.github.raw" \
+            repos/VanIseghemThomas/wasmDOOM/contents/public/shareware.wad > site/doom1.wad
 
           echo "=== assembled site ==="; ls -la site
-          test -s site/wasm-doom.wasm && test -s site/freedoom1.wad
+          test -s site/wasm-doom.wasm && test -s site/doom1.wad
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
