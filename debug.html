@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="description" content="Input event recorder for smart display glasses — see which gesture maps to which key.">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <title>Input Debug — Glasses</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:#000; color:#eaeaea;
+                 font-family:ui-monospace,Menlo,Consolas,monospace; overflow:hidden; }
+    #app { position:fixed; inset:0; display:flex; flex-direction:column; padding:10px 12px; gap:8px; }
+    h1 { margin:0; font-size:12px; color:#7fd; letter-spacing:.5px; font-weight:700; }
+    /* Big "latest event" panel — read the key off this while doing a gesture */
+    #last { border:1px solid #2a2a2a; border-radius:10px; padding:8px 12px; background:#0b0b0b; }
+    #lastType { font-size:12px; color:#8a8; }
+    #lastKey { font-size:46px; font-weight:800; color:#fff; line-height:1.05; word-break:break-all; }
+    #lastMeta { font-size:13px; color:#9ad; margin-top:2px; min-height:16px; }
+    /* Focus targets so the glasses D-pad has something to navigate (makes arrow keys fire) */
+    #foc { display:flex; gap:6px; }
+    .foc { flex:1; padding:6px; border:1px dashed #333; border-radius:8px; color:#777;
+           text-align:center; font-size:11px; }
+    .foc:focus { outline:none; box-shadow:0 0 0 2px #2694fe; color:#cde; }
+    #cols { display:flex; gap:8px; flex:1; min-height:0; }
+    #log { flex:1; min-width:0; overflow:auto; border:1px solid #1c1c1c; border-radius:8px;
+           padding:6px 8px; font-size:12px; line-height:1.4; background:#070707; }
+    #log div { white-space:pre-wrap; border-bottom:1px solid #111; padding:1px 0; }
+    #tally { width:170px; flex-shrink:0; overflow:auto; border:1px solid #1c1c1c; border-radius:8px;
+             padding:6px 8px; font-size:12px; background:#070707; }
+    #tally h2 { margin:0 0 4px; font-size:11px; color:#8a8; }
+    .row { display:flex; justify-content:space-between; gap:8px; }
+    .k { color:#ffd479; } .n { color:#7fd; }
+    #clear { padding:10px; border:1px solid #2a5; border-radius:8px; background:#0d1a0d;
+             color:#8f8; font:700 14px ui-monospace,monospace; cursor:pointer; }
+    #clear:focus { outline:none; box-shadow:0 0 0 2px #2694fe; background:#12241a; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>INPUT DEBUG · do a gesture → read the key</h1>
+    <div id="last">
+      <div id="lastType">waiting for input…</div>
+      <div id="lastKey">—</div>
+      <div id="lastMeta"></div>
+    </div>
+    <div id="foc">
+      <div class="foc" tabindex="0">A</div>
+      <div class="foc" tabindex="0">B</div>
+      <div class="foc" tabindex="0">C</div>
+      <div class="foc" tabindex="0">D</div>
+    </div>
+    <div id="cols">
+      <div id="log"></div>
+      <div id="tally"><h2>KEYDOWN TALLY</h2><div id="tallyList"></div></div>
+    </div>
+    <button id="clear" tabindex="0">CLEAR LOG</button>
+  </div>
+
+  <script>
+  (function () {
+    var logEl = document.getElementById('log'), tallyEl = document.getElementById('tallyList');
+    var lastType = document.getElementById('lastType'), lastKey = document.getElementById('lastKey'), lastMeta = document.getElementById('lastMeta');
+    var STORE = 'glasses_input_log_v1';
+    var state = load();
+    render();
+
+    function load(){ try { return JSON.parse(localStorage.getItem(STORE)) || {lines:[], tally:{}}; } catch(e){ return {lines:[], tally:{}}; } }
+    function save(){ try { localStorage.setItem(STORE, JSON.stringify({lines:state.lines.slice(0,200), tally:state.tally})); } catch(e){} }
+    var perf = (window.performance && performance.now) ? function(){return performance.now();} : function(){return 0;};
+
+    var t0 = 0, lastMove = 0;
+    function record(e){
+      var t = e.type;
+      // throttle high-frequency move events so the log stays readable
+      if ((t === 'pointermove' || t === 'touchmove' || t === 'mousemove')) {
+        var nowt = perf(); if (nowt - lastMove < 140) return; lastMove = nowt;
+      }
+      var big = '', meta = '', desc = t;
+      if (t.indexOf('key') === 0) {
+        big = (e.key === ' ' ? 'Space' : e.key) + '';
+        meta = 'code=' + e.code + '   keyCode=' + e.keyCode + (e.repeat ? '   (repeat)' : '');
+        desc = t + '  ' + JSON.stringify(e.key) + '  code=' + e.code + '  kc=' + e.keyCode + (e.repeat ? ' r' : '');
+        if (t === 'keydown') { var kk = e.code || e.key || ('kc' + e.keyCode); state.tally[kk] = (state.tally[kk] || 0) + 1; }
+      } else if (t.indexOf('pointer') === 0 || t.indexOf('touch') === 0 || t.indexOf('mouse') === 0 || t === 'click') {
+        big = t.toUpperCase();
+        meta = '@' + Math.round(e.clientX || 0) + ',' + Math.round(e.clientY || 0) + (e.pointerType ? '  ' + e.pointerType : '');
+        desc = t + '  ' + meta;
+      } else if (t === 'wheel') { big = 'WHEEL'; meta = 'dy=' + Math.round(e.deltaY); desc = 'wheel dy=' + Math.round(e.deltaY); }
+      else { big = t.toUpperCase(); }
+
+      var dt = t0 ? Math.round(perf() - t0) : 0; t0 = perf();
+      lastType.textContent = t + '   (+' + dt + 'ms)';
+      lastKey.textContent = big || '—';
+      lastMeta.textContent = meta;
+      state.lines.unshift('+' + String(dt).padStart(4) + 'ms  ' + desc);
+      if (state.lines.length > 200) state.lines.length = 200;
+      save(); render();
+    }
+    function render(){
+      logEl.innerHTML = '';
+      for (var i = 0; i < Math.min(state.lines.length, 80); i++){ var d = document.createElement('div'); d.textContent = state.lines[i]; logEl.appendChild(d); }
+      tallyEl.innerHTML = '';
+      Object.keys(state.tally).sort(function(a,b){ return state.tally[b] - state.tally[a]; }).forEach(function(k){
+        var r = document.createElement('div'); r.className = 'row';
+        var s1 = document.createElement('span'); s1.className = 'k'; s1.textContent = k;
+        var s2 = document.createElement('span'); s2.className = 'n'; s2.textContent = state.tally[k];
+        r.appendChild(s1); r.appendChild(s2); tallyEl.appendChild(r);
+      });
+    }
+    document.getElementById('clear').addEventListener('click', function(){ state = {lines:[], tally:{}}; save(); render(); lastKey.textContent = '—'; lastType.textContent = 'cleared'; lastMeta.textContent = ''; });
+
+    ['keydown','keyup','keypress','pointerdown','pointerup','pointermove','click',
+     'touchstart','touchend','touchmove','wheel','gesturestart','gesturechange','gestureend']
+      .forEach(function(t){ window.addEventListener(t, record, {capture:true, passive:true}); });
+
+    var f = document.querySelector('.foc[tabindex]'); if (f) f.focus();  // give the D-pad a starting focus
+  })();
+  </script>
+</body>
+</html>
