@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="description" content="DOOM (Freedoom) for smart display glasses — 600x600, D-pad controls.">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <title>DOOM — Glasses</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin:0; padding:0; background:#000; width:100%; height:100%; overflow:hidden; }
+    #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; }
+    #canvas { image-rendering:pixelated; width:600px; height:600px; background:#000; display:none; }
+    #status { position:fixed; top:50%; left:0; right:0; transform:translateY(-50%); text-align:center;
+              color:#e33; font:600 20px/1.4 ui-monospace,monospace; padding:0 24px; }
+    /* On-screen controls (for simulator / desktop testing; the real glasses use the D-pad) */
+    #pad { position:fixed; right:10px; bottom:10px; z-index:30; display:grid; grid-template-columns:repeat(3,46px);
+           grid-auto-rows:40px; gap:5px; font:600 14px sans-serif; opacity:.9; }
+    #pad button { all:unset; display:flex; align-items:center; justify-content:center; height:40px; border-radius:7px;
+                  background:#2694fe; color:#fff; cursor:pointer; user-select:none; touch-action:none; }
+    #pad button.act { background:#e0523a; }
+    /* Event debugger */
+    #dbgToggle { position:fixed; left:8px; top:8px; z-index:41; background:#111c; color:#9f9;
+                 border:1px solid #0f05; border-radius:6px; font:600 11px ui-monospace,monospace; padding:4px 8px; cursor:pointer; }
+    #dbg { position:fixed; left:8px; top:36px; z-index:40; width:300px; max-height:46vh; overflow:auto;
+           background:#000d; color:#0f0; font:11px/1.35 ui-monospace,monospace; border:1px solid #0f04;
+           border-radius:8px; padding:6px 8px; display:none; }
+    #dbg b { color:#9f9; }
+  </style>
+</head>
+<body>
+  <div id="wrap"><canvas id="canvas" tabindex="0"></canvas></div>
+  <div id="status">Loading…</div>
+
+  <button id="dbgToggle">&#9636; events</button>
+  <div id="dbg"><b>input events (newest first)</b><div id="dbgLog"></div></div>
+
+  <div id="pad">
+    <div></div>
+    <button data-hold="ArrowUp">&#8593;</button>
+    <button data-hold="FIRE">FIRE</button>
+    <button data-hold="ArrowLeft">&#8592;</button>
+    <button data-hold="ArrowDown">&#8595;</button>
+    <button data-hold="ArrowRight">&#8594;</button>
+    <button data-tap="USE">USE</button>
+    <div></div>
+    <div></div>
+  </div>
+
+  <!-- ===== Control adapter + event debugger (tune CONTROLS after reading real events) ===== -->
+  <script>
+  (function () {
+    // Engine key bindings for the bundled prebuilt DOOM. Common DOOM defaults are
+    // fire=Ctrl, use=Space — verify/adjust using the event debugger + on-device test.
+    const CONTROLS = {
+      FIRE: { key: 'Control', code: 'ControlLeft', keyCode: 17 },
+      USE:  { key: ' ',       code: 'Space',       keyCode: 32 },
+    };
+    const ARROW = { ArrowUp:38, ArrowDown:40, ArrowLeft:37, ArrowRight:39 };
+    const canvas = document.getElementById('canvas');
+    const targets = () => [canvas, document, window];
+    let emitting = false;
+    function dispatch(type, s) {
+      emitting = true;
+      const init = { key:s.key, code:s.code, keyCode:s.keyCode, which:s.keyCode, bubbles:true, cancelable:true, composed:true };
+      targets().forEach(t => t.dispatchEvent(new KeyboardEvent(type, init)));
+      emitting = false;
+    }
+    const spec = name => name==='FIRE' ? CONTROLS.FIRE : name==='USE' ? CONTROLS.USE
+                      : { key:name, code:name, keyCode:ARROW[name] };
+    const held = new Set();
+    function down(name){ const s=spec(name); if(!held.has(s.keyCode)){ held.add(s.keyCode); dispatch('keydown', s);} }
+    function up(name){ const s=spec(name); if(held.has(s.keyCode)){ held.delete(s.keyCode); dispatch('keyup', s);} }
+    function tap(name, ms=90){ down(name); setTimeout(()=>up(name), ms); }
+    window.__doom = { down, up, tap, CONTROLS };
+
+    // Map the glasses/emulator "tap" (Enter) -> FIRE so the D-pad Select fires.
+    const remap = type => e => { if (emitting) return; if (e.key==='Enter'){ e.stopImmediatePropagation(); e.preventDefault(); dispatch(type, CONTROLS.FIRE); } };
+    window.addEventListener('keydown', remap('keydown'), true);
+    window.addEventListener('keyup',   remap('keyup'),   true);
+
+    // On-screen pad
+    document.querySelectorAll('#pad button').forEach(b => {
+      const hold = b.dataset.hold, t = b.dataset.tap;
+      if (hold) {
+        b.addEventListener('pointerdown', e => { e.preventDefault(); b.classList.add('act'); down(hold); });
+        const u = () => { b.classList.remove('act'); up(hold); };
+        b.addEventListener('pointerup', u); b.addEventListener('pointerleave', u);
+      } else if (t) {
+        b.addEventListener('pointerdown', e => { e.preventDefault(); tap(t); });
+      }
+    });
+
+    // ===== Event debugger: log ALL input events to discover what the glasses emit =====
+    const logEl = document.getElementById('dbgLog'), dbg = document.getElementById('dbg');
+    document.getElementById('dbgToggle').addEventListener('click', () => {
+      dbg.style.display = dbg.style.display === 'none' ? 'block' : 'none';
+    });
+    let n = 0;
+    function rec(e) {
+      if (emitting && (e.type==='keydown' || e.type==='keyup')) return; // ignore our own synthesized keys
+      let d = e.type;
+      if (e.type.startsWith('key')) d += ' key=' + JSON.stringify(e.key) + ' code=' + e.code + ' kc=' + e.keyCode + (e.repeat ? ' (repeat)' : '');
+      else if (e.type.startsWith('pointer') || e.type.startsWith('mouse') || e.type.startsWith('touch')) d += ' @' + Math.round(e.clientX||0) + ',' + Math.round(e.clientY||0) + (e.pointerType ? ' ' + e.pointerType : '');
+      else if (e.type === 'wheel') d += ' dy=' + Math.round(e.deltaY);
+      const line = document.createElement('div'); line.textContent = (++n) + '  ' + d;
+      logEl.prepend(line); while (logEl.childNodes.length > 60) logEl.removeChild(logEl.lastChild);
+    }
+    ['keydown','keyup','keypress','pointerdown','pointerup','click','touchstart','touchend','wheel','gesturestart','gesturechange']
+      .forEach(t => window.addEventListener(t, rec, { capture:true, passive:true }));
+  })();
+  </script>
+
+  <!-- ===== DOOM engine loader (prebuilt Emscripten ES module + Freedoom IWAD) ===== -->
+  <script type="module">
+    const status = m => { const s = document.getElementById('status'); if (s) s.textContent = m; };
+    try {
+      status('Loading engine…');
+      const { default: Module } = await import('./wasm-doom.js');
+      const canvas = document.getElementById('canvas');
+      canvas.width = 320; canvas.height = 200;
+      const doom = await Module({
+        canvas,
+        locateFile: p => p.endsWith('.wasm') ? './wasm-doom.wasm' : p,
+        print: (...a) => console.log(...a),
+        printErr: (...a) => console.warn(...a),
+      });
+      status('Loading Freedoom…');
+      const buf = new Uint8Array(await (await fetch('./freedoom1.wad')).arrayBuffer());
+      const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
+      if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('unexpected WAD magic: ' + magic);
+      doom.FS.writeFile('/doom.wad', buf);
+      document.getElementById('status').style.display = 'none';
+      canvas.style.display = 'block'; canvas.focus();
+      doom.callMain(['-iwad', 'doom.wad']);
+    } catch (e) {
+      status('Error: ' + (e && e.message || e));
+      console.error(e);
+    }
+  </script>
+</body>
+</html>
