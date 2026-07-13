@@ -41,8 +41,13 @@ jobs:
           gh api -H "Accept: application/vnd.github.raw" \
             repos/VanIseghemThomas/wasmDOOM/contents/public/shareware.wad > site/doom1.wad
 
+          # Pre-gzip the big assets: motion.html fetches these compressed (~40% smaller) and
+          # decompresses in-browser. -k keeps the originals so index.html still works.
+          gzip -9 -k -f site/wasm-doom.wasm
+          gzip -9 -k -f site/doom1.wad
+
           echo "=== assembled site ==="; ls -la site
-          test -s site/wasm-doom.wasm && test -s site/doom1.wad
+          test -s site/wasm-doom.wasm.gz && test -s site/doom1.wad.gz
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
