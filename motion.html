@@ -48,8 +48,17 @@
     const down = s => { if (!held.has(s.keyCode)){ held.add(s.keyCode); ev('keydown', s); } };
     const up   = s => { if (held.has(s.keyCode)){ held.delete(s.keyCode); ev('keyup', s); } };
     const tap  = s => { ev('keydown', s); setTimeout(() => ev('keyup', s), 70); };
-    const LEFT={key:'ArrowLeft',code:'ArrowLeft',keyCode:37}, RIGHT={key:'ArrowRight',code:'ArrowRight',keyCode:39}, FWD={key:'ArrowUp',code:'ArrowUp',keyCode:38};
+    const LEFT={key:'ArrowLeft',code:'ArrowLeft',keyCode:37}, RIGHT={key:'ArrowRight',code:'ArrowRight',keyCode:39}, FWD={key:'ArrowUp',code:'ArrowUp',keyCode:38}, BACK={key:'ArrowDown',code:'ArrowDown',keyCode:40};
     const FIRE={key:'Control',code:'ControlLeft',keyCode:17}, USE={key:' ',code:'Space',keyCode:32}, MENU={key:'Enter',code:'Enter',keyCode:13};
+
+    // ---- Movement driver: forward = band Up gesture OR walk-in-place; back = band Down gesture. ----
+    // You do NOT have to walk — the up/down gestures move you; walking in place also moves you.
+    let bandFwd = false, bandBack = false, stepUntil = 0;
+    function refreshMove(){
+      if (bandFwd || Date.now() < stepUntil) down(FWD); else up(FWD);
+      if (bandBack) down(BACK); else up(BACK);
+    }
+    setInterval(refreshMove, 150);   // auto-releases forward when neither source is active
 
     // ---- Head as a joystick: yaw offset from a calibrated center → turn L/R ----
     const DEAD = 7;            // degrees of deadzone
@@ -66,22 +75,31 @@
     }
 
     // ---- Walk in place: accelerometer step detection → move forward ----
-    const STEP_THR = 12; let lastMag = 0, lastStep = 0, stopTimer = null;
+    const STEP_THR = 12; let lastMag = 0, lastStep = 0;
     function onMotion(e){
       const a = e.accelerationIncludingGravity || e.acceleration; if (!a || a.x == null) return;
       const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z); const now = Date.now();
       if (lastMag < STEP_THR && mag >= STEP_THR && now - lastStep > 250){
-        state.steps++; lastStep = now; down(FWD);
-        clearTimeout(stopTimer); stopTimer = setTimeout(() => up(FWD), 650);   // keep moving while stepping
-        render();
+        state.steps++; lastStep = now; stepUntil = now + 650;   // each step extends the forward window
+        refreshMove(); render();
       }
       lastMag = mag;
     }
 
     // ---- Fire: band pinch arrives as Unidentified / keyCode 0 (Enter for desktop) ----
     const isSelect = e => e.key === 'Unidentified' || e.keyCode === 0 || e.key === 'Enter';
-    window.addEventListener('keydown', e => { if (emitting) return; if (isSelect(e)){ e.stopImmediatePropagation(); e.preventDefault(); tap(MENU); tap(FIRE); tap(USE); } }, true);
-    window.addEventListener('keyup',   e => { if (emitting) return; if (isSelect(e)){ e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+    window.addEventListener('keydown', e => {
+      if (emitting) return;
+      if (isSelect(e)){ e.stopImmediatePropagation(); e.preventDefault(); tap(MENU); tap(FIRE); tap(USE); return; }
+      if (e.key === 'ArrowUp'){ e.stopImmediatePropagation(); e.preventDefault(); bandFwd = true; refreshMove(); }
+      else if (e.key === 'ArrowDown'){ e.stopImmediatePropagation(); e.preventDefault(); bandBack = true; refreshMove(); }
+    }, true);
+    window.addEventListener('keyup', e => {
+      if (emitting) return;
+      if (isSelect(e)){ e.stopImmediatePropagation(); e.preventDefault(); return; }
+      if (e.key === 'ArrowUp'){ e.stopImmediatePropagation(); e.preventDefault(); bandFwd = false; refreshMove(); }
+      else if (e.key === 'ArrowDown'){ e.stopImmediatePropagation(); e.preventDefault(); bandBack = false; refreshMove(); }
+    }, true);
 
     const state = { yaw:0, off:0, turning:0, steps:0 };
     function render(){ hud.textContent = 'yaw ' + state.yaw + '° · off ' + state.off + '° · turn ' + (state.turning>0?'R':state.turning<0?'L':'–') + ' · steps ' + state.steps; }
