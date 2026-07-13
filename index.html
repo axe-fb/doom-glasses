@@ -76,19 +76,20 @@
     window.addEventListener('error', e => fail('ERROR: ' + (e.message || e.filename)));
     window.addEventListener('unhandledrejection', e => fail('ERROR: ' + ((e.reason && e.reason.message) || e.reason)));
 
-    async function fetchProgress(url){
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' for ' + url);
-      const total = +(resp.headers.get('content-length') || 0);
-      if (!resp.body || !resp.body.getReader) return new Uint8Array(await resp.arrayBuffer());
-      const reader = resp.body.getReader(); let received = 0; const chunks = []; let last = -1;
-      for (;;){
-        const { done, value } = await reader.read(); if (done) break;
-        chunks.push(value); received += value.length;
-        const p = total ? Math.floor(received / total * 100) : Math.min(99, Math.floor(received / 3e5));
-        if (p !== last){ last = p; setPct(p, p + '%   ' + (received/1048576).toFixed(1) + (total ? '/' + (total/1048576).toFixed(1) : '') + ' MB'); }
-      }
-      const out = new Uint8Array(received); let pos = 0; for (const c of chunks){ out.set(c, pos); pos += c.length; } return out;
+    // XHR (not fetch-stream): completes via onload even on flaky keep-alive links that
+    // stall a manual ReadableStream reader at the final chunk (the 99%-hang on device).
+    function fetchProgress(url){
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
+        xhr.timeout = 90000;
+        xhr.onprogress = e => { const p = e.lengthComputable ? Math.floor(e.loaded / e.total * 100) : Math.min(99, Math.floor(e.loaded / 3e5)); setPct(p, p + '%   ' + (e.loaded/1048576).toFixed(1) + (e.lengthComputable ? '/' + (e.total/1048576).toFixed(1) : '') + ' MB'); };
+        xhr.onload = () => { (xhr.status >= 200 && xhr.status < 300) ? resolve(new Uint8Array(xhr.response)) : reject(new Error('HTTP ' + xhr.status)); };
+        xhr.onerror = () => reject(new Error('network error'));
+        xhr.ontimeout = () => reject(new Error('timeout'));
+        xhr.send();
+      });
     }
 
     try {
@@ -102,7 +103,11 @@
         print: () => {}, printErr: () => {},
       });
       setPct(0, 'Downloading DOOM…');
-      const buf = await fetchProgress('./doom1.wad');
+      let buf;
+      for (let attempt = 1; ; attempt++){
+        try { buf = await fetchProgress('./doom1.wad'); break; }
+        catch (err){ if (attempt >= 3) throw err; setPct(0, 'Retrying (' + attempt + ')…'); await new Promise(r => setTimeout(r, 800)); }
+      }
       const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
       if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('bad WAD magic: ' + magic);
       setPct(100, 'Starting…');
