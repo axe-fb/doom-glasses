@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <meta name="description" content="Tiny head-tracking raycaster FPS demo for smart display glasses. Loads instantly.">
+  <title>Raycaster — Head Tracking</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==">
+  <style>
+    html,body{margin:0;height:100%;background:#000;overflow:hidden}
+    #c{position:fixed;inset:0;margin:auto;width:600px;height:600px;image-rendering:pixelated;background:#000}
+    #hud{position:fixed;left:8px;top:8px;color:#6f6;font:11px ui-monospace,monospace;background:#0008;padding:3px 7px;border-radius:5px;pointer-events:none}
+  </style>
+</head>
+<body>
+  <canvas id="c" width="320" height="320"></canvas>
+  <div id="hud">head-track demo</div>
+  <script>
+  (function(){
+    const cv=document.getElementById('c'), ctx=cv.getContext('2d'), W=cv.width, H=cv.height, hud=document.getElementById('hud');
+    const MAP=[
+      "1111111111111111",
+      "1..............1",
+      "1..2222...33...1",
+      "1.....2........1",
+      "1.....2...111..1",
+      "1.........1.1..1",
+      "1..33.....1.1..1",
+      "1..3......1....1",
+      "1..3...........1",
+      "1......2222....1",
+      "1..............1",
+      "1...3......22..1",
+      "1...3..........1",
+      "1......11......1",
+      "1..............1",
+      "1111111111111111"];
+    const MW=MAP[0].length, MH=MAP.length;
+    const cell=(x,y)=> (x<0||y<0||x>=MW||y>=MH) ? '1' : MAP[y|0][x|0];
+    const solid=c=> c!=='.'&&c!=='0';
+    const COL={'1':[150,112,72],'2':[92,96,120],'3':[140,64,60]};
+    let px=2.5, py=2.5, ang=0;
+    let headTurn=0, bandTurn=0, bandMove=0, stepUntil=0, muzzle=0;
+
+    function render(dt){
+      ctx.fillStyle='#0a0a0e'; ctx.fillRect(0,0,W,H>>1);              // ceiling
+      ctx.fillStyle='#17171b'; ctx.fillRect(0,H>>1,W,H>>1);           // floor
+      const FOV=Math.PI/3;
+      for(let col=0; col<W; col++){
+        const ra=ang - FOV/2 + FOV*(col/W);
+        const dx=Math.cos(ra), dy=Math.sin(ra);
+        let mapX=px|0, mapY=py|0;
+        const ddx=Math.abs(1/dx), ddy=Math.abs(1/dy);
+        let sx,sy,sdx,sdy;
+        if(dx<0){sx=-1; sdx=(px-mapX)*ddx;} else {sx=1; sdx=(mapX+1-px)*ddx;}
+        if(dy<0){sy=-1; sdy=(py-mapY)*ddy;} else {sy=1; sdy=(mapY+1-py)*ddy;}
+        let hit='0', side=0;
+        for(let i=0;i<48;i++){
+          if(sdx<sdy){ sdx+=ddx; mapX+=sx; side=0; } else { sdy+=ddy; mapY+=sy; side=1; }
+          const c=cell(mapX,mapY); if(solid(c)){ hit=c; break; }
+        }
+        const dist = side===0 ? (sdx-ddx) : (sdy-ddy);
+        const h = Math.min(H, H/(dist+0.0001));
+        const y0 = (H-h)/2;
+        const b = COL[hit]||[120,120,120];
+        let sh = Math.max(0.12, 1 - dist/11); if(side===1) sh*=0.7;   // darken E/W faces
+        ctx.fillStyle='rgb('+(b[0]*sh|0)+','+(b[1]*sh|0)+','+(b[2]*sh|0)+')';
+        ctx.fillRect(col, y0, 1, h);
+      }
+      // weapon
+      ctx.fillStyle='#2e2114'; ctx.fillRect(W/2-16, H-42, 32, 42);
+      ctx.fillStyle='#5a5a5a'; ctx.fillRect(W/2-5, H-64, 10, 26);
+      if(muzzle>0){ ctx.fillStyle='rgba(255,220,90,'+muzzle+')'; ctx.fillRect(W/2-11, H-80, 22, 18); muzzle-=dt*4.5; }
+    }
+    function tryMove(nx,ny){ if(!solid(cell(nx,py))) px=nx; if(!solid(cell(px,ny))) py=ny; }
+    let last=performance.now();
+    function loop(t){
+      const dt=Math.min(0.05,(t-last)/1000); last=t;
+      const turn = bandTurn||headTurn;
+      ang += turn*2.4*dt;
+      const mv = bandMove || (t<stepUntil?1:0);
+      if(mv) tryMove(px+Math.cos(ang)*3*dt*mv, py+Math.sin(ang)*3*dt*mv);
+      render(dt);
+      hud.textContent='turn '+(turn>0?'R':turn<0?'L':'-')+'  move '+(mv>0?'FWD':mv<0?'BACK':'-');
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+
+    // ---- head tracking (yaw = turn), walk-in-place (accel = forward) ----
+    const DEAD=7; let center=null;
+    const short=a=>{a%=360; if(a>180)a-=360; if(a<-180)a+=360; return a;};
+    addEventListener('deviceorientation', e=>{ if(e.alpha==null) return; if(center==null) center=e.alpha; const o=short(e.alpha-center); headTurn = o>DEAD?1 : o<-DEAD?-1 : 0; });
+    let lastMag=0,lastStep=0;
+    addEventListener('devicemotion', e=>{ const a=e.accelerationIncludingGravity||e.acceleration; if(!a||a.x==null) return; const m=Math.hypot(a.x,a.y,a.z); const n=performance.now(); if(lastMag<12&&m>=12&&n-lastStep>250){ lastStep=n; stepUntil=n+650; } lastMag=m; });
+    addEventListener('pointerdown', async()=>{ try{ if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(e){} }, {once:true});
+
+    // ---- band arrows (move/turn) + pinch (fire) ----
+    addEventListener('keydown', e=>{ const k=e.key;
+      if(k==='ArrowLeft') bandTurn=-1; else if(k==='ArrowRight') bandTurn=1;
+      else if(k==='ArrowUp') bandMove=1; else if(k==='ArrowDown') bandMove=-1;
+      else if(k==='Unidentified'||e.keyCode===0||k==='Enter'||k===' ') muzzle=1;
+    });
+    addEventListener('keyup', e=>{ const k=e.key;
+      if(k==='ArrowLeft'||k==='ArrowRight') bandTurn=0; else if(k==='ArrowUp'||k==='ArrowDown') bandMove=0;
+    });
+    window.__demo={ feedYaw:a=>dispatchEvent(new DeviceOrientationEvent('deviceorientation',{alpha:a})), fire:()=>muzzle=1 };
+  })();
+  </script>
+</body>
+</html>
