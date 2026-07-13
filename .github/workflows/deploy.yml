@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site
-          cp index.html debug.html motion.html site/
+          cp index.html debug.html motion.html demo.html site/
           touch site/.nojekyll
 
           # Prebuilt DOOM engine (WASM) — vendored from VanIseghemThomas/wasmDOOM.
