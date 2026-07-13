@@ -123,43 +123,33 @@
     const bar = document.getElementById('barfill'), pctEl = document.getElementById('pct'), msgEl = document.getElementById('msg'), loader = document.getElementById('loader');
     const setPct = (p, label) => { bar.style.width = p + '%'; pctEl.textContent = label || (p + '%'); };
     window.addEventListener('error', e => { msgEl.textContent = 'ERROR: ' + (e.message || e.filename); });
-    // Streaming download with a visible %; finish the instant all bytes arrive so we
-    // never hang waiting for the connection to close (the earlier 99% stall on device).
-    async function download(url){
-      const resp = await fetch(url, { cache: 'force-cache' });   // cached after first load → instant reloads
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const total = +(resp.headers.get('content-length') || 0);
-      if (!resp.body || !resp.body.getReader) return new Uint8Array(await resp.arrayBuffer());
-      const reader = resp.body.getReader(); let received = 0; const chunks = []; let last = -1;
-      while (true){
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value); received += value.length;
-        const p = total ? Math.min(100, Math.floor(received / total * 100)) : Math.min(99, Math.floor(received / 3e5));
-        if (p !== last){ last = p; setPct(p, p + '%   ' + (received/1048576).toFixed(1) + (total ? '/' + (total/1048576).toFixed(1) : '') + ' MB'); }
-        if (total && received >= total){ try { await reader.cancel(); } catch(e){} break; }   // got everything
-      }
-      const out = new Uint8Array(received); let pos = 0; for (const c of chunks){ out.set(c, pos); pos += c.length; } return out;
+    // Fetch a gzipped asset and decompress in-browser (transfer ~40% smaller). Uses
+    // pipeThrough + Response so the browser manages the read to completion (no manual-
+    // reader stall). Cached after first success → instant reloads.
+    async function fetchGz(url){
+      const resp = await fetch(url, { cache: 'force-cache' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + url);
+      const stream = resp.body.pipeThrough(new DecompressionStream('gzip'));
+      return new Uint8Array(await new Response(stream).arrayBuffer());
     }
+    async function withRetry(fn, label){ for (let a = 1; ; a++){ try { return await fn(); } catch (e){ if (a >= 4) throw e; setPct(0, 'Retry ' + a + ' (' + label + ')'); await new Promise(r => setTimeout(r, 900)); } } }
     try {
       setPct(0, 'Loading engine…');
       const { default: Module } = await import('./wasm-doom.js');
-      const canvas = document.getElementById('canvas'); canvas.width = 320; canvas.height = 200;
-      const doom = await Module({ canvas, locateFile: p => p.endsWith('.wasm') ? './wasm-doom.wasm' : p, print: () => {}, printErr: () => {} });
-      setPct(0, 'Downloading DOOM…');
       const t0 = Date.now(); let ticking = true;
-      const beat = setInterval(() => { if (ticking && pctEl.textContent.indexOf('%') < 0) pctEl.textContent = 'Downloading… ' + Math.round((Date.now()-t0)/1000) + 's'; }, 500);
-      let buf;
+      const beat = setInterval(() => { if (ticking) pctEl.textContent = 'Downloading… ' + Math.round((Date.now()-t0)/1000) + 's'; }, 500);
+      let wasmBin, wadBin;
       try {
-        for (let attempt = 1; ; attempt++){
-          try { buf = await download('./doom1.wad'); break; }
-          catch (err){ if (attempt >= 4) throw err; setPct(0, 'Retry ' + attempt + '…'); await new Promise(r => setTimeout(r, 900)); }
-        }
+        wasmBin = await withRetry(() => fetchGz('./wasm-doom.wasm.gz'), 'engine');   // ~0.7 MB compressed
+        wadBin  = await withRetry(() => fetchGz('./doom1.wad.gz'), 'game');          // ~2.7 MB compressed
       } finally { ticking = false; clearInterval(beat); }
-      const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
+      setPct(95, 'Starting…');
+      const canvas = document.getElementById('canvas'); canvas.width = 320; canvas.height = 200;
+      const doom = await Module({ canvas, wasmBinary: wasmBin, locateFile: p => p, print: () => {}, printErr: () => {} });
+      const magic = String.fromCharCode(wadBin[0], wadBin[1], wadBin[2], wadBin[3]);
       if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error('bad WAD magic: ' + magic);
-      setPct(100, 'Starting…'); doom.FS.writeFile('/doom.wad', buf);
-      loader.classList.add('hidden'); canvas.style.display = 'block'; canvas.focus();
+      doom.FS.writeFile('/doom.wad', wadBin);
+      setPct(100, ''); loader.classList.add('hidden'); canvas.style.display = 'block'; canvas.focus();
       doom.callMain(['-iwad', 'doom.wad', '-warp', '1', '1', '-skill', '2']);
     } catch (e) { setPct(0, 'Failed'); msgEl.textContent = (e && e.message) || String(e); }
   </script>
